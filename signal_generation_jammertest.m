@@ -30,13 +30,37 @@ Splits    = {'TRAIN','VAL','TEST'};
 
 % --- Choose ONE of these "Counts" styles ---
 % (A) Uniform counts per class
-Counts.TRAIN = 1500;
-Counts.VAL   = 1500;
-Counts.TEST  = 1500;
+Counts.TRAIN = 200;
+Counts.VAL   = 150;
+Counts.TEST  = 150;
 
 % Stratified C/N0 (dB-Hz) and JSR (dB) bins (uniform within bins)
-CNo_bins = [30 35 40 45 50 60 70];
-JSR_bins = [10 15 20 25 30 35 40 45 50 60 70 80]; % add 60 if you want “angry” NB %ADD 10 15 HERE
+% Default bins (used when a class does not have a specific override)
+% Stratified C/N0 (dB-Hz) and JSR (dB) bins (uniform within bins)
+% Default bins (used when a class does not have a specific override)
+CNo_bins_default = [30 35 40 45 50 60 70];
+JSR_bins_default = [10 15 20 25 30 35 40 45 50 60 70 80];
+
+% Optional per-class overrides.
+% - Field names MUST match the entries in "Classes".
+% - If a field is missing or empty, that class falls back to the *_default bins.
+% - For NoJam, leave JSR_bins_by_class.NoJam empty to keep jsr = NaN (true "no jammer").
+CNo_bins_by_class = struct( ...
+    'NoJam', [30 40 45 50 55 60 65 70], ...  % NoJam with slightly higher C/N0 (clean GNSS)
+    'Chirp', [], ...                      % use CNo_bins_default
+    'NB',    [], ...                      % use CNo_bins_default
+    'CW',    [], ...                      % use CNo_bins_default
+    'WB',    [], ...                      % use CNo_bins_default
+    'FH',    [] );                        % use CNo_bins_default
+
+JSR_bins_by_class = struct( ...
+    'NoJam', [], ...  % jsr = NaN => truly no jammer
+    'Chirp', [30 35 40 45 50 60 70 80], ...
+    'NB', [30 35 40 45 50 60 70 80], ...
+    'CW', [30 35 40 45 50 60 70 80], ...
+    'WB', [30 35 40 45 50 60 70 80], ...
+    'FH', [30 35 40 45 50 60 70 80] );
+
 
 % (Optional) Chirp “families” ranges (kept from your version)
 ChirpFamilies = struct( ...
@@ -87,8 +111,21 @@ for s = 1:numel(Splits)
 
             band = Bands{ randi(numel(Bands)) };
 
-            cno = draw_in_bins(CNo_bins);
-            if strcmpi(cls,'NoJam'), jsr = NaN; else, jsr = draw_in_bins(JSR_bins); end
+            % --- Draw C/N0 and JSR for this class ---
+            cno_bins_cls = get_bins_for_class(cls, CNo_bins_by_class, CNo_bins_default);
+            jsr_bins_cls = get_bins_for_class(cls, JSR_bins_by_class, JSR_bins_default);
+
+            cno = draw_in_bins(cno_bins_cls);
+            if strcmpi(cls,'NoJam')
+                % For NoJam, by default keep jsr = NaN so the channel truly has no jammer.
+                if isempty(jsr_bins_cls)
+                    jsr = NaN;
+                else
+                    jsr = draw_in_bins(jsr_bins_cls);
+                end
+            else
+                jsr = draw_in_bins(jsr_bins_cls);
+            end
 
             % Build jammer parameters for this sample (families kept)
             Pjam = build_jammer_params(cls, band, ParamJamDef, ChirpFamilies);
@@ -149,9 +186,22 @@ function val = draw_in_bins(edges)
     val = a + (b-a)*rand();
 end
 
+
+function edges = get_bins_for_class(cls, bins_by_class, bins_default)
+    % Helper: return the bin edges to use for a given jammer class.
+    % - If bins_by_class has a non-empty field "cls", use that.
+    % - Otherwise fall back to bins_default.
+    if isstruct(bins_by_class) && isfield(bins_by_class, cls) && ~isempty(bins_by_class.(cls))
+        edges = bins_by_class.(cls);
+    else
+        edges = bins_default;
+    end
+end
+
 function v = pick_in(rng2)
     v = rng2(1) + diff(rng2)*rand();
 end
+
 
 function P = build_jammer_params(cls, bandTok, Def, ~)
     % Device-like families so labels cover Jammertest variants.
