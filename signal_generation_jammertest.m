@@ -23,7 +23,7 @@ ParamGNSS = struct('SV_Number', 8);
 Bands     = {'L1CA','L2C','L5','E1OS'};
 
 % Classes (including NoJam)
-Classes   = {'NoJam','Chirp','NB','CW','WB','FH'};
+Classes   = {'NoJam','Chirp','NB','WB'};
 
 % Splits
 Splits    = {'TRAIN','VAL','TEST'};
@@ -36,30 +36,22 @@ Counts.TEST  = 150;
 
 % Stratified C/N0 (dB-Hz) and JSR (dB) bins (uniform within bins)
 % Default bins (used when a class does not have a specific override)
-% Stratified C/N0 (dB-Hz) and JSR (dB) bins (uniform within bins)
-% Default bins (used when a class does not have a specific override)
+
 CNo_bins_default = [30 35 40 45 50 60 70];
 JSR_bins_default = [10 15 20 25 30 35 40 45 50 60 70 80];
 
-% Optional per-class overrides.
-% - Field names MUST match the entries in "Classes".
-% - If a field is missing or empty, that class falls back to the *_default bins.
-% - For NoJam, leave JSR_bins_by_class.NoJam empty to keep jsr = NaN (true "no jammer").
+
 CNo_bins_by_class = struct( ...
-    'NoJam', [30 40 45 50 55 60 65 70], ...  % NoJam with slightly higher C/N0 (clean GNSS)
-    'Chirp', [], ...                      % use CNo_bins_default
-    'NB',    [], ...                      % use CNo_bins_default
-    'CW',    [], ...                      % use CNo_bins_default
-    'WB',    [], ...                      % use CNo_bins_default
-    'FH',    [] );                        % use CNo_bins_default
+    'NoJam', [30 40 45 50 55 60 65 70], ...  % NoJam with slightly higher C/N0
+    'Chirp', [], ...                         % use CNo_bins_default
+    'NB',    [], ...                         % use CNo_bins_default
+    'WB',    [] );                           % use CNo_bins_default
 
 JSR_bins_by_class = struct( ...
     'NoJam', [], ...  % jsr = NaN => truly no jammer
     'Chirp', [30 35 40 45 50 60 70 80], ...
-    'NB', [30 35 40 45 50 60 70 80], ...
-    'CW', [30 35 40 45 50 60 70 80], ...
-    'WB', [30 35 40 45 50 60 70 80], ...
-    'FH', [30 35 40 45 50 60 70 80] );
+    'NB',    [30 35 40 45 50 60 70 80], ...
+    'WB',    [30 35 40 45 50 60 70 80] );
 
 
 % (Optional) Chirp “families” ranges (kept from your version)
@@ -213,42 +205,122 @@ function P = build_jammer_params(cls, bandTok, Def, ~)
         case 'NoJam'
             % type set to NoJam; realism comes from RX front-end in Channel
             P = struct('type','NoJam');
-
+        %
         case 'Chirp'
-            fam = choose({'USB','CigS1','CigS2','NEAT','H3_3','H4_1'});
-            base = struct('type','Chirp', 'shape', choose({'sawup','sawdown','tri'}), ...
-                          'edge_win', Def.chirp.edge_win, 'osc_offset_Hz', 0);
+            % Map each Jammertest device family to realistic BW / period:
+            %   - 'USB'   → U1.x USB dongle (70–80 MHz, 5–8 µs, L1/E1 flank)
+            %   - 'CigS1' → S1.x cigarette lighter, L1 only (30 MHz, 20–40 µs)
+            %   - 'CigS2' → S2.x dual-band cigarette lighter (L1+L2),
+            %               70–90 MHz, 40–60 µs (long sweeps, problematic for 33 µs tiles)
+            %   - 'NEAT'  → H1.1-like handheld (18–24 MHz, 10 µs, L1 or L2)
+            %   - 'H3_3'  → 3-band handheld H3.3 (L1/L2/L5, 20/14/17 MHz, 13 µs)
+            %   - 'H4_1'  → 4-band handheld H4.1 (L1 wide 100 MHz + E6/L2/L5)
+            %
+            % The chirp *shape* and edge window come from Def.chirp.*.
+
+            fam  = choose({'USB','CigS1','CigS2','NEAT','H3_3','H4_1'});
+            base = struct( ...
+                'type',          'Chirp', ...
+                'shape',         choose({'sawup','sawdown','tri'}), ...
+                'edge_win',      Def.chirp.edge_win, ...
+                'osc_offset_Hz', 0 ...
+            );
+
             switch fam
-                case 'USB'     % U1.x
-                    base.bw_Hz     = pick([70, 80])*1e6;
-                    base.period_s  = pick([5, 8])*1e-6;
-                    base.rf_Hz     = pick([1580, 1595])*1e6; % L1/E1 flank
+                % ----------------------------------------------------------
+                % USB dongle U1.x  (70–80 MHz BW, 5–8 µs period)
+                % ----------------------------------------------------------
+                case 'USB'
+                    base.bw_Hz    = pick([70, 80]) * 1e6;     % 70–80 MHz
+                    base.period_s = pick([5, 8])   * 1e-6;    % 5–8 µs
+                    base.rf_Hz    = pick([1580, 1595]) * 1e6; % L1/E1 flank
                     P = base;
-                case 'CigS1'   % S1.x (L1 only)
-                    base.bw_Hz     = 30e6;
-                    base.period_s  = pick([20, 40])*1e-6;
-                    base.rf_Hz     = RF.L1; P = base;
-                case 'CigS2'   % S2.x (L1 + L2 dual)
-                    cL1 = base; cL1.bw_Hz=30e6; cL1.period_s=pick([20,60])*1e-6; cL1.rf_Hz=RF.L1;
-                    cL2 = cL1;  cL2.rf_Hz = RF.L2;
-                    P = struct('type','Composite','components',{{cL1,cL2}},'weights',[1,1]);
-                case 'NEAT'    % H1.1-ish
-                    base.bw_Hz     = pick([18, 24])*1e6; base.period_s  = 10e-6;
-                    base.rf_Hz     = choose({RF.L1, RF.L2}); P = base;
-                case 'H3_3'    % 3-band handheld, 13 µs
-                    c1 = base; c1.period_s=13e-6; c1.bw_Hz=20e6; c1.rf_Hz=RF.L1;
-                    c2 = base; c2.period_s=13e-6; c2.bw_Hz=14e6; c2.rf_Hz=RF.L2;
-                    c3 = base; c3.period_s=13e-6; c3.bw_Hz=17e6; c3.rf_Hz=RF.L5;
-                    P  = struct('type','Composite','components',{{c1,c2,c3}},'weights',[1,1,1], ...
-                                'spurs',struct('enable',true,'count',randi([2,6]), ...
-                                               'rel_dB',-20-20*rand(),'bw_Hz',[0.5e6, 5e6]));
-                case 'H4_1'    % 4-band handheld
-                    c1 = base; c1.period_s=9e-6;  c1.bw_Hz=100e6; c1.rf_Hz=1550e6;
-                    cE = base; cE.period_s=9e-6;  cE.bw_Hz=45e6;  cE.rf_Hz=1260e6;
-                    c2 = base; c2.period_s=9e-6;  c2.bw_Hz=20e6;  c2.rf_Hz=1220e6;
-                    c5 = base; c5.period_s=9e-6;  c5.bw_Hz=20e6;  c5.rf_Hz=1182e6;
-                    P  = struct('type','Composite','components',{{c1,cE,c2,c5}},'weights',[1,1,1,1]);
+
+                % ----------------------------------------------------------
+                % Cigarette lighter S1.x (L1 only, 30 MHz, 20–40 µs)
+                % ----------------------------------------------------------
+                case 'CigS1'
+                    base.bw_Hz    = 30e6;                     % 30 MHz
+                    base.period_s = pick([20, 40]) * 1e-6;    % 20–40 µs
+                    base.rf_Hz    = RF.L1;
+                    P = base;
+
+                % ----------------------------------------------------------
+                % Cigarette lighter S2.x (L1+L2, *long* sweeps)
+                %  - This is the one that causes “partial” chirps in 33 µs
+                %    spectrogram tiles: Tper ≈ 40–60 µs.
+                %  - We also match the wide BW: 70–90 MHz.
+                % ----------------------------------------------------------
+                case 'CigS2'
+                    cL1 = base;
+                    cL1.bw_Hz    = pick([70, 90]) * 1e6;      % 70–90 MHz
+                    cL1.period_s = pick([40, 60]) * 1e-6;     % 40–60 µs
+                    cL1.rf_Hz    = RF.L1;
+
+                    cL2 = cL1;
+                    cL2.rf_Hz    = RF.L2;                     % same sweep on L2
+
+                    P = struct( ...
+                        'type',       'Composite', ...
+                        'components', {{cL1, cL2}}, ...
+                        'weights',    [1, 1] ...
+                    );
+
+                % ----------------------------------------------------------
+                % NEAT / H1.1-like handheld (around 20 MHz, 10 µs)
+                % ----------------------------------------------------------
+                case 'NEAT'
+                    base.bw_Hz    = pick([18, 24]) * 1e6;     % ≈ 20 MHz
+                    base.period_s = 10e-6;                    % 10 µs
+                    base.rf_Hz    = choose({RF.L1, RF.L2});   % L1 or L2
+                    P = base;
+
+                % ----------------------------------------------------------
+                % H3.3: 3-band handheld (L1, L2, L5; fixed 13 µs period)
+                % BW: L1 20 MHz, L2 14 MHz, L5 17 MHz
+                % ----------------------------------------------------------
+                case 'H3_3'
+                    c1 = base; c1.period_s = 13e-6; c1.bw_Hz = 20e6; c1.rf_Hz = RF.L1;
+                    c2 = base; c2.period_s = 13e-6; c2.bw_Hz = 14e6; c2.rf_Hz = RF.L2;
+                    c3 = base; c3.period_s = 13e-6; c3.bw_Hz = 17e6; c3.rf_Hz = RF.L5;
+
+                    % Optional low-level swept spurs to mimic the datasheet
+                    sp = struct( ...
+                        'enable', true, ...
+                        'count',  randi([2, 6]), ...
+                        'rel_dB', -20 - 20*rand(), ...         %  -20 .. -40 dBc
+                        'bw_Hz',  [0.5e6, 5e6] ...              % narrow swept spurs
+                    );
+
+                    P  = struct( ...
+                        'type',       'Composite', ...
+                        'components', {{c1, c2, c3}}, ...
+                        'weights',    [1, 1, 1], ...
+                        'spurs',      sp ...
+                    );
+
+                % ----------------------------------------------------------
+                % H4.1: 4-band handheld
+                %  - L1: wide 100 MHz sweep around 1550 MHz
+                %  - “E6”: ≈45 MHz around 1260 MHz
+                %  - L2: 45 MHz around ≈1220 MHz
+                %  - L5: 38 MHz around ≈1182 MHz
+                %  - Period: 9 µs on all bands
+                % ----------------------------------------------------------
+                case 'H4_1'
+                    c1 = base; c1.period_s = 9e-6; c1.bw_Hz = 100e6; c1.rf_Hz = 1550e6;
+                    cE = base; cE.period_s = 9e-6; cE.bw_Hz = 45e6;  cE.rf_Hz = 1260e6;
+                    c2 = base; c2.period_s = 9e-6; c2.bw_Hz = 45e6;  c2.rf_Hz = 1220e6;
+                    c5 = base; c5.period_s = 9e-6; c5.bw_Hz = 38e6;  c5.rf_Hz = 1182e6;
+
+                    P = struct( ...
+                        'type',       'Composite', ...
+                        'components', {{c1, cE, c2, c5}}, ...
+                        'weights',    [1, 1, 1, 1] ...
+                    );
             end
+
+            %end
         %reference
         % --- NB: PRN at 9 Mcps with short AM flashes on the line ---
         case 'NB'
@@ -301,32 +373,6 @@ function P = build_jammer_params(cls, bandTok, Def, ~)
                                'osc_offset_Hz', pick(Def.wb.osc_offset_Hz), ...
                                'rf_Hz', choose({RF.L1,RF.G1,RF.L2,RF.L5}));
             end
-
-        case 'CW'
-            if rand()<0.5
-                P = struct('type','CW','tone_offset_Hz', pick([-1,1])*pick([0, 150e3]), ...
-                           'freq_drift_Hzps', pick([-200,200]), 'amp_flicker_dB', pick([0,1.5]), ...
-                           'rf_Hz', choose({RF.L1,RF.L2}));
-            else
-                K = randi([2,5]);
-                offs = linspace(-pick([3,10])*1e6, pick([3,10])*1e6, K) + 1e3*randn(1,K);
-                P = struct('type','CWcomb','offsets_Hz', offs, 'rf_Hz', RF.L1);
-            end
-        %ref
-        case 'FH'
-            % Make hops clearly visible within a 34 µs tile:
-            % - large step (6–14 MHz)
-            % - short dwell (2–4 µs) => many hops per tile
-            K      = randi([5,8]);                  % number of tones
-            stepHz = (6e6 + 8e6*rand());            % 6–14 MHz steps
-            dwell  = (2e-6 + 2e-6*rand());          % 2–4 µs per hop
-
-            P = struct('type','FH', ...
-                       'num_tones', K, ...
-                       'step_Hz', stepHz, ...
-                       'dwell_s', dwell, ...
-                       'phase_continuous', false, ...
-                       'rf_Hz', RF.L1);             % no need for extra FE on FH
 
 
         otherwise
