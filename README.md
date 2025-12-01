@@ -1,13 +1,15 @@
-# GNSS\_generator
+# GNSS_generator
 
-MATLAB-based generator of synthetic GNSS + jamming IQ tiles, designed to emulate the RF conditions from the **Jammertest 2023** campaign and to feed machine-learning pipelines (e.g. the `GNSS-jamming-classifier` project).
+MATLAB-based generator of synthetic GNSS + jamming IQ tiles, designed to emulate the RF conditions from the **Jammertest 2023** campaign and to feed machine-learning pipelines (for example, the `GNSS-jamming-classifier` project).
 
 > **Credits / origin**
 >
-> - The directory `GNSS_signals/` is taken from and inspired by **Dani Pascual**’s project **GNSS-matlab**: <https://github.com/danipascual/GNSS-matlab>.  
-> - This repository adds:
->   - A configurable **GNSS + jammer + channel + RF front-end** simulator.
->   - A dataset builder (`signal_generation_jammertest.m`) that produces stratified TRAIN/VAL/TEST sets of IQ tiles with metadata.
+> - This project is **heavily based on and originally derived from**  
+>   **Dani Pascual**’s repository **GNSS-matlab**: <https://github.com/danipascual/GNSS-matlab>.  
+>   Many GNSS signal generation functions and core ideas come from that work.
+> - On top of GNSS-matlab, this repository adds:
+>   - A configurable **GNSS + jammer + channel + RF front-end** simulator tailored to Jammertest-like scenarios.
+>   - A dataset builder (`signal_generation_jammertest.m`) that produces stratified TRAIN/VAL/TEST sets of IQ tiles with rich metadata for machine learning.
 
 ---
 
@@ -17,7 +19,7 @@ MATLAB-based generator of synthetic GNSS + jamming IQ tiles, designed to emulate
   - Multi-channel GNSS-like signal at **60 MHz** sampling:
     - Uses `Fct_Channel_Gen.m` + helpers to produce a sum of several C/A-like PRN channels.
     - Parameter `ParamGNSS.SV_Number` controls the number of simulated satellites.
-  - Bands are abstracted as `'L1CA'`, `'L2C'`, `'L5'`, `'E1OS'` (mapped internally to RF centres and bandwidths).
+  - Bands are abstracted as `'L1CA'`, `'L2C'`, `'L5'`, `'E1OS'` (mapped internally to RF centre frequencies and bandwidths).
 
 - **Realistic jammer models**
   - Jammers implemented in `Jammer_signals/`:
@@ -31,14 +33,14 @@ MATLAB-based generator of synthetic GNSS + jamming IQ tiles, designed to emulate
       - Jamming **bandwidth** (Hz).
       - **Centre frequency** (RF band).
       - **Sweep period** (for chirps).
-      - Multiband combinations (e.g. L1 + L2 + L5).
+      - Multiband combinations (for example, L1 + L2 + L5).
 
 - **Channel and C/N0 + JSR control**
   - `Channel/` implements a simple baseband channel with:
     - AWGN controlled by **C/N0** (dB-Hz) per sample.
     - Optional Nakagami and Clarke-like fading helpers (for future use).
   - JSR (jammer-to-signal power ratio) is enforced in-band:
-    - `scale_to_jsr.m` and logic inside `Fct_Channel_Gen.m` rescale jammer power for a given **JSR\_dB**.
+    - `scale_to_jsr.m` and logic inside `Fct_Channel_Gen.m` rescale jammer power for a given **JSR_dB**.
   - C/N0 and JSR are drawn from **bins per class** so that the dataset covers realistic conditions over the full dynamic range.
 
 - **RF front-end impairments**
@@ -60,8 +62,8 @@ MATLAB-based generator of synthetic GNSS + jamming IQ tiles, designed to emulate
     1. Picks the dataset split and class.
     2. Draws a band (`L1CA`, `L2C`, `L5`, `E1OS`).
     3. Draws C/N0 and JSR from configurable bins (global defaults or per-class overrides).
-    4. Draws jammer **family** parameters (e.g. USB / cigarette / multiband handheld ranges).
-    5. Runs `Fct_Channel_Gen` to synthesize GNSS + jammer + AWGN + front-end impairments.
+    4. Draws jammer **family** parameters (for example, USB / cigarette / multiband handheld ranges).
+    5. Runs `Fct_Channel_Gen` to synthesise GNSS + jammer + AWGN + front-end impairments.
     6. Saves the tile and associated metadata to disk.
 
   - Output:
@@ -77,7 +79,7 @@ At the top level:
 ```text
 .
 ├── Channel/                 # Channel, C/N0, JSR and GNSS-like core generator
-├── GNSS_signals/            # Submodule from https://github.com/danipascual/GNSS-matlab
+├── GNSS_signals/            # GNSS signal generation code derived from GNSS-matlab
 ├── Init/                    # High-level parameter initialization functions
 ├── Jammer_signals/          # Jammer waveforms and jammer factory
 ├── Utils/                   # Common helpers (PRN, filters, band maps, random walks, etc.)
@@ -224,44 +226,11 @@ This generator is intentionally separated from any ML framework, so you can plug
 
 ---
 
-## 6. Configuration tips
+## 6. License & attribution
 
-- **Reproducibility**
-  - Use a fixed `Seed` and do not modify the tile ordering if you need strict reproducibility.
-  - All other random draws are derived from the global seed plus deterministic offsets per split/class/sample.
+- The project started from, and still contains, substantial code from  
+  **GNSS-matlab** by **Dani Pascual**: <https://github.com/danipascual/GNSS-matlab>.  
+  Please refer to that repository for the original license terms applying to the reused components.
+- Any additional code and extensions in this repository are licensed under the terms specified in this repository’s own `LICENSE` file (to be added if not already present).
 
-- **Matching Jammertest 2023**
-  - Keep `Fs = 60e6` and `Ns = 2048`.
-  - Keep the chirp families and their ranges (USB, S1.x, S2.x, H3.3, etc.) as they were calibrated from the **Jammertest 2023** RF descriptions.
-
-- **Extending classes**
-  - To add a new logical class (e.g. `CW` or `FH`), you typically need to:
-    1. Add the class name to `Classes`.
-    2. Extend `CountsSpec`/`Quota` with a count for the new class.
-    3. Update `CNo_bins_by_class` / `JSR_bins_by_class` if you want custom ranges.
-    4. Extend `build_jammer_params` / `jammer_factory` to map the new class to an underlying waveform model.
-
----
-
-## 7. Suggested additional documentation
-
-To keep this README focused, the following extra docs are recommended (to be placed e.g. under a `docs/` folder):
-
-- **`docs/pipeline.md`** – High-level diagram of the full simulation chain:
-  - GNSS\_signals → jammer\_factory → Channel → RF frontend → dataset writer.
-- **`docs/jammer_models.md`** – Detailed description of each jammer family:
-  - Mapping from Jammertest equipment names (S1.x, S2.x, H3.3, H6.x, etc.) to the parameter ranges used here.
-- **`docs/channel_and_cn0_jsr.md`** – How C/N0 and JSR are enforced numerically, and how to interpret the power statistics in `meta.pow`.
-- **`docs/frontend_models.md`** – Explanation of each front-end impairment and its parameter ranges.
-- **`docs/metadata_format.md`** – Formal specification of the `meta` struct, for downstream consumers.
-
-These documents will make it easier to connect this generator with other parts of your GNSS jamming research (e.g. classifiers, detectors, mitigation pipelines).
-
----
-
-## 8. License & attribution
-
-- The **`GNSS_signals/`** directory is used under the terms of the original **GNSS-matlab** project by **Dani Pascual** (see `GNSS_signals/LICENSE` and `GNSS_signals/README`).
-- The rest of this repository is licensed under the terms specified in this repository’s own `LICENSE` file (to be added if not already present).
-
-If you use this generator in your research, please also acknowledge the GNSS-matlab project and the Jammertest 2023 organisers whose RF descriptions inspired the jammer models.
+If you use this generator in your research, please acknowledge both the GNSS-matlab project and the Jammertest 2023 organisers whose RF descriptions inspired the jammer models.
